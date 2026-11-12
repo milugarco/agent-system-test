@@ -1,0 +1,30 @@
+{
+  "name": "sistema-comercial",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sistema comercial desktop com API central e PostgreSQL",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build --workspace @sistema/contracts && concurrently -k -n api,desktop \"npm run dev --workspace @sistema/api\" \"npm run dev --workspace @sistema/desktop\"",
+    "dev:api": "npm run build --workspace @sistema/contracts && npm run dev --workspace @sistema/api",
+    "dev:desktop": "npm run build --workspace @sistema/contracts && npm run dev --workspace @sistema/desktop",
+    "build": "npm run build --workspace @sistema/contracts && npm run build --workspace @sistema/api && npm run build --workspace @sistema/desktop",
+    "typecheck": "npm run build --workspace @sistema/contracts && npm run typecheck --workspace @sistema/api && npm run typecheck --workspace @sistema/desktop",
+    "test": "npm run build --workspace @sistema/contracts && npm run test --workspace @sistema/api",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx apps/api/src/db/migrate.ts",
+    "db:status": "node --env-file-if-exists=.env --import tsx apps/api/src/db/migrate.ts --status"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.8"
+  },
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10.9.0"
+  }
+}
