@@ -2,33 +2,37 @@
 
 ## Objetivo
 
-Construir um sistema comercial desktop enxuto, confiável e auditável, com:
+Construir um sistema comercial confiável e auditável com desktop Electron, API central e PostgreSQL, com:
 - Cadastro de clientes
 - Cadastro de produtos
 - Vendas
 - Controle de estoque
 - Financeiro básico (contas a pagar/receber, pagamentos/recebimentos e caixa)
 
-Não implementar fiscal/NF-e, multiempresa, multiusuário remoto, integração bancária ou recursos fora do escopo sem decisão explícita.
+Não implementar fiscal/NF-e, multiempresa, controle de permissões complexo, integração bancária ou recursos fora do escopo sem decisão explícita.
 
 ## Stack e decisões fixas
 
-- Electron + React + TypeScript + Vite
-- PostgreSQL como banco relacional externo
-- Driver `pg`; SQL explícito e migrations SQL versionadas
+- Desktop Electron + React + TypeScript + Vite
+- API central Node.js + Fastify + TypeScript
+- PostgreSQL central, acessado exclusivamente pela API
+- Driver `pg`; SQL explícito e migrations SQL versionadas em `database/migrations/`
+- npm workspaces em `apps/desktop`, `apps/api` e `packages/contracts`
 - Zod para validar entradas nas fronteiras
 - Vitest para testes
-- Monólito modular; não criar microserviços
-- Renderer isolado do Node e do banco
+- Monólito modular na API; não criar microserviços
+- Comunicação desktop→API por HTTP iniciada no processo Electron Main
+- Renderer isolado do Node, da rede e do banco
 
-Mudanças nessas decisões exigem proposta documentada em `docs/architecture/decisions/` e aprovação do usuário.
+Mudanças nessas decisões exigem proposta documentada em `docs/architecture/decisions/` e aprovação do usuário. A mudança aprovada para API central está em `docs/architecture/decisions/0001-central-api.md`.
 
 ## Arquitetura e fronteiras
 
 ### Renderer
 - React cuida de apresentação, interação e estado de tela.
 - Não importar `node:*`, `electron`, `pg`, filesystem, credenciais ou módulos de infraestrutura.
-- Comunicar-se exclusivamente por API exposta pelo preload.
+- Comunicar-se exclusivamente por métodos explícitos expostos pelo preload; o preload encaminha chamadas IPC permitidas ao Main.
+- Não fazer chamadas HTTP diretamente: o Main é o cliente HTTP da API.
 - Não colocar regra de negócio crítica no frontend.
 
 ### Preload
@@ -37,14 +41,15 @@ Mudanças nessas decisões exigem proposta documentada em `docs/architecture/dec
 - Cada método deve mapear para um canal IPC específico.
 
 ### Main / aplicação
-- Registrar handlers IPC e validar payloads com Zod.
-- Handlers IPC devem ser adaptadores finos; delegar para casos de uso/serviços.
-- Regras de negócio não devem depender de Electron.
-- Serviços orquestram transações e repositórios.
+- Registrar poucos handlers IPC e validar `sender`/frame.
+- Handlers IPC são adaptadores finos; fazem chamadas HTTP específicas à API.
+- O Main não implementa regras comerciais, SQL ou acesso PostgreSQL.
+- Regras de negócio e serviços da API não devem depender de Electron.
 - Não retornar erros internos, SQL, stack traces ou segredos ao renderer.
 
 ### Persistência
-- `pg` somente no processo principal.
+- `pg` somente em `apps/api`.
+- A API valida entradas com Zod e aplica regras de negócio no servidor.
 - Usar parâmetros SQL (`$1`, `$2`...), nunca interpolar valores do usuário.
 - Toda transação usa um único `PoolClient`: `BEGIN`, operações, `COMMIT`; em falha `ROLLBACK`; sempre `release` em `finally`.
 - Definir constraints, foreign keys, índices e `NOT NULL` no banco; validação da aplicação não substitui integridade do banco.
@@ -56,31 +61,26 @@ Mudanças nessas decisões exigem proposta documentada em `docs/architecture/dec
 A implementação deve evoluir para módulos por domínio, mantendo dependências apontando para dentro:
 
 ```text
-src/
-  main/
-    bootstrap/
-    ipc/
-    infrastructure/
-      database/
-        migrations/
-        pool.ts
-        migration-runner.ts
-  preload/
-    index.ts
-    api.ts
-  renderer/
-    app/
-    components/
-    features/
-      customers/
-      products/
-      sales/
-      inventory/
-      finance/
-  shared/
-    contracts/
-    validation/
-  modules/
+apps/
+  desktop/
+    electron/
+      main.ts
+      preload.ts
+    src/
+      ui/
+  api/
+    src/
+      modules/
+      infrastructure/
+        database/
+          pool.ts
+          migration-runner.ts
+packages/
+  contracts/
+    src/
+database/
+  migrations/
+apps/api/src/modules/
     customers/
       domain/
       application/
@@ -134,6 +134,8 @@ A estrutura pode ser ajustada quando o bootstrap real for criado, mas não mistu
 - Não armazenar credenciais no renderer nem versionar `.env`
 - Evitar `shell.openExternal` sem allowlist/validação
 - Desabilitar DevTools em builds de produção, salvo decisão explícita de diagnóstico
+- A API inicia em `127.0.0.1` por padrão. Antes de expô-la em rede, definir autenticação/autorização, TLS e política de origem/rate limit adequadas ao deployment.
+- O renderer não acessa a API diretamente; a política CSP limita `connect-src` e o Main valida origem e remetente do IPC.
 
 ## Qualidade
 
@@ -150,8 +152,8 @@ A estrutura pode ser ajustada quando o bootstrap real for criado, mas não mistu
 
 1. `architect` define/valida fronteiras e registra decisões relevantes.
 2. `database` propõe schema, constraints e migrations quando houver persistência.
-3. `backend` implementa domínio, casos de uso, IPC e repositórios conforme fronteiras.
-4. `frontend` implementa telas usando apenas contratos compartilhados/API do preload.
+3. `backend` implementa domínio, casos de uso, rotas HTTP e repositórios PostgreSQL na API.
+4. `frontend` implementa telas usando somente contratos compartilhados e métodos explícitos do preload, que encaminham operações HTTP específicas.
 5. `qa` cria/roda testes e identifica lacunas.
 6. `code-reviewer` revisa diff, segurança, integridade e regressões.
 
